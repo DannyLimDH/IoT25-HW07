@@ -1,0 +1,1547 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>ESP32 RSSI Monitor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        line-height: 1.6;
+      }
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        color: #333;
+        text-align: center;
+      }
+      .data-container {
+        background-color: #f5f5f5;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        transition: background-color 0.3s;
+      }
+      .data-update {
+        background-color: #e3f2fd;
+      }
+      .value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #2c3e50;
+      }
+      .chart-container {
+        height: 300px;
+        margin: 20px 0;
+      }
+      button {
+        background-color: #4caf50;
+        border: none;
+        color: white;
+        padding: 10px 20px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border-radius: 5px;
+      }
+      button#disconnectBleButton {
+        background-color: #f44336;
+      }
+      button#clearChartButton {
+        background-color: #ff9800;
+      }
+      button#forceReadButton {
+        background-color: #2196f3;
+      }
+      button#addMeasurementButton {
+        background-color: #9c27b0;
+      }
+      .status {
+        margin-top: 10px;
+      }
+      .error-message {
+        color: #f44336;
+        font-weight: bold;
+        margin: 10px 0;
+      }
+      .chart-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .chart-time-selector {
+        display: flex;
+        gap: 10px;
+      }
+      .time-button {
+        background-color: #607d8b;
+        padding: 5px 10px;
+        font-size: 14px;
+      }
+      .time-button.active {
+        background-color: #2196f3;
+      }
+      .data-log {
+        max-height: 150px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin-top: 20px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .debug-info {
+        background-color: #f9f9f9;
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin-top: 10px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .connection-mode {
+        margin-top: 10px;
+        padding: 10px;
+        background-color: #fff3cd;
+        border-radius: 5px;
+      }
+      .mode-selector {
+        display: flex;
+        gap: 10px;
+        margin-top: 5px;
+      }
+      .model-params {
+        background-color: #e8f5e9;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 15px 0;
+      }
+      .param-input {
+        display: flex;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .param-input label {
+        width: 200px;
+      }
+      .param-input input {
+        width: 80px;
+        padding: 5px;
+        margin-right: 10px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: center;
+      }
+      th {
+        background-color: #f2f2f2;
+      }
+      tr:nth-child(even) {
+        background-color: #f9f9f9;
+      }
+      .measurement-input {
+        display: flex;
+        align-items: center;
+        margin: 15px 0;
+        gap: 10px;
+      }
+      .measurement-input input {
+        padding: 8px;
+        width: 100px;
+      }
+      #colorIndicator {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        margin: 10px auto;
+        border: 1px solid #ddd;
+        transition: background-color 0.5s;
+      }
+      .rgb-controls {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 10px;
+      }
+      .rgb-slider {
+        display: flex;
+        flex-direction: column;
+        width: 30%;
+      }
+      .rgb-slider input {
+        margin: 5px 0;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.0.1/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.2.0/dist/chartjs-adapter-luxon.min.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <h1>ESP32 RSSI and Distance Monitor</h1>
+
+      <div class="status">
+        <button id="connectBleButton">Connect to ESP32</button>
+        <button id="disconnectBleButton">Disconnect</button>
+        <p>
+          BLE Status:
+          <strong
+            ><span id="bleState" style="color: #d13a30"
+              >Not Connected</span
+            ></strong
+          >
+        </p>
+        <p id="bleError" class="error-message" style="display: none">
+          Web Bluetooth API is not available in this browser. Please use Chrome,
+          Edge, or Opera.
+        </p>
+      </div>
+
+      <div class="connection-mode">
+        <p>Data Receiving Mode:</p>
+        <div class="mode-selector">
+          <label
+            ><input type="radio" name="mode" value="notification" checked />
+            Notification Mode</label
+          >
+          <label
+            ><input type="radio" name="mode" value="polling" /> Polling
+            Mode</label
+          >
+        </div>
+        <p id="modeDescription">
+          Using notification mode: Device will send data automatically when
+          available.
+        </p>
+      </div>
+
+      <div class="data-container" id="rssiContainer">
+        <h2>RSSI Value</h2>
+        <p class="value" id="rssiValue">--</p>
+        <p>Last Update: <span id="rssiTimestamp">--</span></p>
+      </div>
+
+      <div class="data-container" id="txPowerContainer">
+        <h2>TX Power Value</h2>
+        <p class="value" id="txPowerValue">--</p>
+      </div>
+
+      <div class="data-container" id="distanceContainer">
+        <h2>Estimated Distance</h2>
+        <p class="value" id="distanceValue">--</p>
+        <p>
+          Based on path loss model: distance = 10<sup
+            >(txPower - rssi - 69.09) / 31.73</sup
+          >
+        </p>
+      </div>
+
+      <div class="data-container" id="rgbContainer">
+        <h2>RGB LED Status</h2>
+        <div id="colorIndicator"></div>
+        <p id="colorName">Not set</p>
+        <p>Color changes automatically based on distance:</p>
+        <ul>
+          <li>≥ 4m: White (255,255,255)</li>
+          <li>3-4m: Green (0,255,0)</li>
+          <li>2-3m: Yellow (255,255,0)</li>
+          <li>1-2m: Orange (255,165,0)</li>
+          <li>&lt;1m: Red (255,0,0)</li>
+        </ul>
+        <div class="rgb-controls">
+          <div class="rgb-slider">
+            <label for="redSlider">Red: <span id="redValue">0</span></label>
+            <input type="range" id="redSlider" min="0" max="255" value="0" />
+          </div>
+          <div class="rgb-slider">
+            <label for="greenSlider"
+              >Green: <span id="greenValue">0</span></label
+            >
+            <input type="range" id="greenSlider" min="0" max="255" value="0" />
+          </div>
+          <div class="rgb-slider">
+            <label for="blueSlider">Blue: <span id="blueValue">0</span></label>
+            <input type="range" id="blueSlider" min="0" max="255" value="0" />
+          </div>
+        </div>
+        <button id="sendRgbButton">Send Custom RGB</button>
+        <button id="toggleAutoRgbButton">Auto RGB: ON</button>
+      </div>
+
+      <div class="model-params">
+        <h3>Distance Estimation Model Parameters</h3>
+        <div class="param-input">
+          <label for="pathLossExponent">Path Loss Exponent (n):</label>
+          <input
+            type="number"
+            id="pathLossExponent"
+            value="2.0"
+            step="0.1"
+            min="1.0"
+            max="4.0"
+          />
+          <span>Range: 1.0 (free space) to 4.0 (indoor with obstacles)</span>
+        </div>
+        <div class="param-input">
+          <label for="referenceDistance">Reference Distance (m):</label>
+          <input
+            type="number"
+            id="referenceDistance"
+            value="1.0"
+            step="0.1"
+            min="0.1"
+          />
+        </div>
+        <button id="updateModelButton">Update Model</button>
+      </div>
+
+      <div class="chart-controls">
+        <div class="chart-time-selector">
+          <button class="time-button active" data-time="1">1 Min</button>
+          <button class="time-button" data-time="5">5 Min</button>
+          <button class="time-button" data-time="15">15 Min</button>
+          <button class="time-button" data-time="30">30 Min</button>
+        </div>
+        <button id="clearChartButton">Clear Chart</button>
+      </div>
+
+      <div class="chart-container">
+        <canvas id="rssiChart"></canvas>
+      </div>
+
+      <div class="chart-container">
+        <canvas id="distanceChart"></canvas>
+      </div>
+
+      <h3>Distance Measurement Analysis</h3>
+      <div class="measurement-input">
+        <label for="actualDistance">Actual Distance (m):</label>
+        <input
+          type="number"
+          id="actualDistance"
+          value="1.0"
+          step="0.1"
+          min="0.1"
+        />
+        <button id="addMeasurementButton">Add Measurement</button>
+      </div>
+
+      <table id="measurementTable">
+        <thead>
+          <tr>
+            <th>Actual Distance (m)</th>
+            <th>Measured Distance (m)</th>
+            <th>Error (m)</th>
+            <th>Error (%)</th>
+            <th>RSSI (dBm)</th>
+            <th>TX Power (dBm)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Measurement data will be added here -->
+        </tbody>
+      </table>
+
+      <div class="chart-container">
+        <canvas id="comparisonChart"></canvas>
+      </div>
+
+      <p>Target ESP32 MAC Address: <span id="macAddress">--</span></p>
+      <p>Connection Time: <span id="connectionTime">--</span></p>
+      <p>Device Name: <span id="deviceName">ESP32_RSSI_Server</span></p>
+
+      <h3>Debugging Information</h3>
+      <div class="debug-info">
+        <p>Notification Count: <span id="notificationCount">0</span></p>
+        <p>
+          Last Notification Time: <span id="lastNotificationTime">Never</span>
+        </p>
+        <p>
+          Connection Status: <span id="connectionStatus">Disconnected</span>
+        </p>
+        <button id="forceReadButton">Force Read Value</button>
+        <p>Browser Info: <span id="browserInfo">--</span></p>
+      </div>
+
+      <h3>Data Log</h3>
+      <div class="data-log" id="dataLog"></div>
+    </div>
+
+    <script>
+      // DOM Elements
+      const connectButton = document.getElementById("connectBleButton");
+      const disconnectButton = document.getElementById("disconnectBleButton");
+      const clearChartButton = document.getElementById("clearChartButton");
+      const forceReadButton = document.getElementById("forceReadButton");
+      const updateModelButton = document.getElementById("updateModelButton");
+      const addMeasurementButton = document.getElementById(
+        "addMeasurementButton"
+      );
+      const sendRgbButton = document.getElementById("sendRgbButton");
+      const toggleAutoRgbButton = document.getElementById(
+        "toggleAutoRgbButton"
+      );
+      const rssiValueElement = document.getElementById("rssiValue");
+      const txPowerValueElement = document.getElementById("txPowerValue");
+      const distanceValueElement = document.getElementById("distanceValue");
+      const bleStateContainer = document.getElementById("bleState");
+      const rssiTimestampElement = document.getElementById("rssiTimestamp");
+      const macAddressElement = document.getElementById("macAddress");
+      const connectionTimeElement = document.getElementById("connectionTime");
+      const deviceNameElement = document.getElementById("deviceName");
+      const bleErrorElement = document.getElementById("bleError");
+      const dataLogElement = document.getElementById("dataLog");
+      const rssiContainer = document.getElementById("rssiContainer");
+      const txPowerContainer = document.getElementById("txPowerContainer");
+      const distanceContainer = document.getElementById("distanceContainer");
+      const rgbContainer = document.getElementById("rgbContainer");
+      const colorIndicator = document.getElementById("colorIndicator");
+      const colorName = document.getElementById("colorName");
+      const timeButtons = document.querySelectorAll(".time-button");
+      const notificationCountElement =
+        document.getElementById("notificationCount");
+      const lastNotificationTimeElement = document.getElementById(
+        "lastNotificationTime"
+      );
+      const connectionStatusElement =
+        document.getElementById("connectionStatus");
+      const browserInfoElement = document.getElementById("browserInfo");
+      const modeRadios = document.querySelectorAll('input[name="mode"]');
+      const modeDescriptionElement = document.getElementById("modeDescription");
+      const pathLossExponentInput = document.getElementById("pathLossExponent");
+      const referenceDistanceInput =
+        document.getElementById("referenceDistance");
+      const actualDistanceInput = document.getElementById("actualDistance");
+      const measurementTableBody = document
+        .getElementById("measurementTable")
+        .querySelector("tbody");
+      const redSlider = document.getElementById("redSlider");
+      const greenSlider = document.getElementById("greenSlider");
+      const blueSlider = document.getElementById("blueSlider");
+      const redValue = document.getElementById("redValue");
+      const greenValue = document.getElementById("greenValue");
+      const blueValue = document.getElementById("blueValue");
+
+      // Define BLE Device Specs
+      const deviceName = "ESP32_RSSI_Server";
+      const bleService = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+      const dataCharacteristic = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
+      // Global Variables to Handle Bluetooth
+      let bleServer;
+      let bleServiceFound;
+      let dataCharacteristicFound;
+      let connectionStartTime;
+      let chartTimeWindow = 1; // Default time window in minutes
+      let notificationCount = 0;
+      let pollingInterval;
+      let reconnectAttempts = 0;
+      let usePollingMode = false;
+      let autoRgbEnabled = true;
+
+      // Distance model parameters
+      let pathLossExponent = 2.0;
+      let referenceDistance = 1.0;
+
+      // Current values
+      let currentRssi = null;
+      let currentTxPower = null;
+      let currentDistance = null;
+      let currentRgb = { r: 0, g: 0, b: 0 };
+
+      // Measurement data for analysis
+      const measurements = [];
+
+      // Data for charts
+      const rssiData = {
+        datasets: [
+          {
+            label: "RSSI (dBm)",
+            data: [],
+            borderColor: "rgb(75, 192, 192)",
+            backgroundColor: "rgba(75, 192, 192, 0.2)",
+            borderWidth: 2,
+            tension: 0.2,
+            pointRadius: 3,
+          },
+        ],
+      };
+
+      const distanceData = {
+        datasets: [
+          {
+            label: "Distance (m)",
+            data: [],
+            borderColor: "rgb(255, 99, 132)",
+            backgroundColor: "rgba(255, 99, 132, 0.2)",
+            borderWidth: 2,
+            tension: 0.2,
+            pointRadius: 3,
+          },
+        ],
+      };
+
+      // Chart configurations
+      const rssiChartConfig = {
+        type: "line",
+        data: rssiData,
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: {
+            duration: 300,
+          },
+          scales: {
+            x: {
+              type: "time",
+              time: {
+                unit: "second",
+                displayFormats: {
+                  second: "HH:mm:ss",
+                },
+                tooltipFormat: "HH:mm:ss",
+              },
+              title: {
+                display: true,
+                text: "Time",
+              },
+            },
+            y: {
+              suggestedMin: -100,
+              suggestedMax: -30,
+              title: {
+                display: true,
+                text: "RSSI (dBm)",
+              },
+            },
+          },
+          plugins: {
+            legend: {
+              position: "top",
+            },
+            tooltip: {
+              callbacks: {
+                title: function (tooltipItems) {
+                  return luxon.DateTime.fromMillis(
+                    tooltipItems[0].parsed.x
+                  ).toFormat("HH:mm:ss");
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const distanceChartConfig = {
+        type: "line",
+        data: distanceData,
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: {
+            duration: 300,
+          },
+          scales: {
+            x: {
+              type: "time",
+              time: {
+                unit: "second",
+                displayFormats: {
+                  second: "HH:mm:ss",
+                },
+                tooltipFormat: "HH:mm:ss",
+              },
+              title: {
+                display: true,
+                text: "Time",
+              },
+            },
+            y: {
+              suggestedMin: 0,
+              suggestedMax: 5,
+              title: {
+                display: true,
+                text: "Distance (m)",
+              },
+            },
+          },
+          plugins: {
+            legend: {
+              position: "top",
+            },
+            tooltip: {
+              callbacks: {
+                title: function (tooltipItems) {
+                  return luxon.DateTime.fromMillis(
+                    tooltipItems[0].parsed.x
+                  ).toFormat("HH:mm:ss");
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const comparisonChartConfig = {
+        type: "bar",
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: "Actual Distance (m)",
+              data: [],
+              backgroundColor: "rgba(54, 162, 235, 0.5)",
+              borderColor: "rgb(54, 162, 235)",
+              borderWidth: 1,
+            },
+            {
+              label: "Measured Distance (m)",
+              data: [],
+              backgroundColor: "rgba(255, 99, 132, 0.5)",
+              borderColor: "rgb(255, 99, 132)",
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: "Distance (m)",
+              },
+            },
+            x: {
+              title: {
+                display: true,
+                text: "Measurement",
+              },
+            },
+          },
+        },
+      };
+
+      // Initialize charts
+      let rssiChart = new Chart(
+        document.getElementById("rssiChart"),
+        rssiChartConfig
+      );
+
+      let distanceChart = new Chart(
+        document.getElementById("distanceChart"),
+        distanceChartConfig
+      );
+
+      let comparisonChart = new Chart(
+        document.getElementById("comparisonChart"),
+        comparisonChartConfig
+      );
+
+      // Connect Button
+      connectButton.addEventListener("click", (event) => {
+        if (isWebBluetoothEnabled()) {
+          connectToDevice();
+        }
+      });
+
+      // Disconnect Button
+      disconnectButton.addEventListener("click", disconnectDevice);
+
+      // Clear Chart Button
+      clearChartButton.addEventListener("click", () => {
+        rssiData.datasets[0].data = [];
+        distanceData.datasets[0].data = [];
+        rssiChart.update();
+        distanceChart.update();
+        addLogMessage("Charts cleared");
+      });
+
+      // Force Read Button
+      forceReadButton.addEventListener("click", async () => {
+        if (dataCharacteristicFound && bleServer && bleServer.connected) {
+          try {
+            addLogMessage("Forcing value read...");
+            const value = await dataCharacteristicFound.readValue();
+            const decodedValue = new TextDecoder().decode(value);
+            addLogMessage(`Forced read value: ${decodedValue}`);
+            processReceivedData(decodedValue);
+          } catch (error) {
+            addLogMessage(`Force read error: ${error.message}`);
+          }
+        } else {
+          addLogMessage("Cannot force read: not connected");
+        }
+      });
+
+      // Update Model Button
+      updateModelButton.addEventListener("click", () => {
+        pathLossExponent = parseFloat(pathLossExponentInput.value);
+        referenceDistance = parseFloat(referenceDistanceInput.value);
+
+        addLogMessage(
+          `Model parameters updated: n=${pathLossExponent}, d0=${referenceDistance}m`
+        );
+
+        // Recalculate current distance if we have RSSI and TX Power
+        if (currentRssi !== null && currentTxPower !== null) {
+          currentDistance = calculateDistance(currentRssi, currentTxPower);
+          distanceValueElement.textContent = currentDistance.toFixed(2) + " m";
+          highlightContainer(distanceContainer);
+
+          // Update RGB if auto mode is enabled
+          if (autoRgbEnabled) {
+            updateRGBBasedOnDistance(currentDistance);
+          }
+        }
+      });
+
+      // Add Measurement Button
+      addMeasurementButton.addEventListener("click", () => {
+        const actualDistance = parseFloat(actualDistanceInput.value);
+
+        if (isNaN(actualDistance) || actualDistance <= 0) {
+          alert("Please enter a valid actual distance");
+          return;
+        }
+
+        if (currentDistance === null) {
+          alert("No current distance measurement available");
+          return;
+        }
+
+        // Add measurement to the array
+        const measurement = {
+          actualDistance: actualDistance,
+          measuredDistance: currentDistance,
+          error: Math.abs(currentDistance - actualDistance),
+          errorPercent: Math.abs(
+            ((currentDistance - actualDistance) / actualDistance) * 100
+          ),
+          rssi: currentRssi,
+          txPower: currentTxPower,
+          timestamp: new Date(),
+        };
+
+        measurements.push(measurement);
+
+        // Add to table
+        addMeasurementToTable(measurement);
+
+        // Update comparison chart
+        updateComparisonChart();
+
+        addLogMessage(
+          `Measurement added: Actual=${actualDistance}m, Measured=${currentDistance.toFixed(
+            2
+          )}m`
+        );
+      });
+
+      // Send RGB Button
+      sendRgbButton.addEventListener("click", () => {
+        const r = parseInt(redSlider.value);
+        const g = parseInt(greenSlider.value);
+        const b = parseInt(blueSlider.value);
+
+        sendRgbValues(r, g, b);
+      });
+
+      // Toggle Auto RGB Button
+      toggleAutoRgbButton.addEventListener("click", () => {
+        autoRgbEnabled = !autoRgbEnabled;
+        toggleAutoRgbButton.textContent = `Auto RGB: ${
+          autoRgbEnabled ? "ON" : "OFF"
+        }`;
+
+        if (autoRgbEnabled && currentDistance !== null) {
+          // Update RGB based on current distance
+          updateRGBBasedOnDistance(currentDistance);
+        }
+
+        addLogMessage(
+          `Auto RGB mode: ${autoRgbEnabled ? "Enabled" : "Disabled"}`
+        );
+      });
+
+      // RGB Sliders
+      redSlider.addEventListener("input", updateColorPreview);
+      greenSlider.addEventListener("input", updateColorPreview);
+      blueSlider.addEventListener("input", updateColorPreview);
+
+      function updateColorPreview() {
+        const r = parseInt(redSlider.value);
+        const g = parseInt(greenSlider.value);
+        const b = parseInt(blueSlider.value);
+
+        redValue.textContent = r;
+        greenValue.textContent = g;
+        blueValue.textContent = b;
+
+        colorIndicator.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
+        colorName.textContent = `Custom RGB(${r}, ${g}, ${b})`;
+      }
+
+      // Time window selector buttons
+      timeButtons.forEach((button) => {
+        button.addEventListener("click", (e) => {
+          // Remove active class from all buttons
+          timeButtons.forEach((btn) => btn.classList.remove("active"));
+          // Add active class to clicked button
+          e.target.classList.add("active");
+          // Update time window
+          chartTimeWindow = parseInt(e.target.dataset.time);
+          addLogMessage(
+            `Chart time window set to ${chartTimeWindow} minute(s)`
+          );
+          // Update chart
+          updateChartTimeWindow();
+        });
+      });
+
+      // Mode radio buttons
+      modeRadios.forEach((radio) => {
+        radio.addEventListener("change", (e) => {
+          usePollingMode = e.target.value === "polling";
+          if (usePollingMode) {
+            modeDescriptionElement.textContent =
+              "Using polling mode: Data will be requested every second.";
+            addLogMessage("Switched to polling mode");
+          } else {
+            modeDescriptionElement.textContent =
+              "Using notification mode: Device will send data automatically when available.";
+            addLogMessage("Switched to notification mode");
+          }
+
+          // If already connected, update the connection mode
+          if (bleServer && bleServer.connected && dataCharacteristicFound) {
+            updateConnectionMode();
+          }
+        });
+      });
+
+      // Check if BLE is available in your Browser
+      function isWebBluetoothEnabled() {
+        if (!navigator.bluetooth) {
+          console.log("Web Bluetooth API is not available in this browser!");
+          bleErrorElement.style.display = "block";
+          return false;
+        }
+        console.log("Web Bluetooth API supported in this browser.");
+        bleErrorElement.style.display = "none";
+        return true;
+      }
+
+      // Check browser compatibility
+      function checkBrowserCompatibility() {
+        const userAgent = navigator.userAgent;
+        const isAndroid = /Android/i.test(userAgent);
+        const isChrome = /Chrome/i.test(userAgent);
+        const chromeVersion = userAgent.match(/Chrome\/(\d+)/);
+
+        const browserInfo = {
+          userAgent,
+          isAndroid,
+          isChrome,
+          chromeVersion: chromeVersion ? chromeVersion[1] : "unknown",
+        };
+
+        console.log("Browser environment:", browserInfo);
+        browserInfoElement.textContent = `${
+          isAndroid ? "Android" : "Desktop"
+        } with ${
+          isChrome
+            ? "Chrome " + (chromeVersion ? chromeVersion[1] : "unknown")
+            : "Other browser"
+        }`;
+
+        addLogMessage(
+          `Running on ${isAndroid ? "Android" : "Desktop"} with ${
+            isChrome
+              ? "Chrome " + (chromeVersion ? chromeVersion[1] : "unknown")
+              : "Other browser"
+          }`
+        );
+
+        // Android Chrome often has issues with notifications
+        if (isAndroid && isChrome) {
+          addLogMessage(
+            "Android Chrome detected - consider using polling mode"
+          );
+          document.querySelector('input[value="polling"]').checked = true;
+          usePollingMode = true;
+          modeDescriptionElement.textContent =
+            "Using polling mode: Data will be requested every second.";
+        }
+
+        return browserInfo;
+      }
+
+      // Connect to BLE Device and Enable Notifications
+      async function connectToDevice() {
+        console.log("Initializing Bluetooth...");
+        addLogMessage("Initializing Bluetooth connection...");
+
+        try {
+          const device = await navigator.bluetooth.requestDevice({
+            filters: [{ name: deviceName }],
+            optionalServices: [bleService],
+          });
+
+          console.log("Device Selected:", device.name);
+          addLogMessage(`Device selected: ${device.name}`);
+          deviceNameElement.textContent = device.name || deviceName;
+          macAddressElement.textContent = device.id || "Unknown";
+          bleStateContainer.innerHTML = "Connected to " + device.name;
+          bleStateContainer.style.color = "#24af37";
+          connectionStatusElement.textContent = "Connected";
+
+          device.addEventListener("gattservicedisconnected", onDisconnected);
+          connectionStartTime = new Date();
+          updateConnectionTime();
+
+          // Connect to GATT server
+          bleServer = await device.gatt.connect();
+          console.log("Connected to GATT Server");
+          addLogMessage("Connected to GATT Server");
+
+          // Get service
+          bleServiceFound = await bleServer.getPrimaryService(bleService);
+          console.log("Service discovered:", bleServiceFound.uuid);
+          addLogMessage(`Service discovered: ${bleServiceFound.uuid}`);
+
+          // Get characteristic
+          dataCharacteristicFound = await bleServiceFound.getCharacteristic(
+            dataCharacteristic
+          );
+          console.log(
+            "Characteristic discovered:",
+            dataCharacteristicFound.uuid
+          );
+          addLogMessage(
+            `Characteristic discovered: ${dataCharacteristicFound.uuid}`
+          );
+
+          // Set up connection based on selected mode
+          await updateConnectionMode();
+
+          // Initial read
+          const value = await dataCharacteristicFound.readValue();
+          const decodedValue = new TextDecoder().decode(value);
+          console.log("Initial value:", decodedValue);
+          addLogMessage(`Initial value: ${decodedValue}`);
+          processReceivedData(decodedValue);
+
+          // Start connection monitoring
+          monitorConnection();
+
+          // Reset reconnect attempts
+          reconnectAttempts = 0;
+        } catch (error) {
+          console.log("Connection error:", error);
+          addLogMessage(`Connection error: ${error.message}`);
+          bleStateContainer.innerHTML = "Connection Error: " + error.message;
+          bleStateContainer.style.color = "#d13a30";
+          connectionStatusElement.textContent = "Connection Failed";
+        }
+      }
+
+      // Update connection mode based on user selection
+      async function updateConnectionMode() {
+        if (!dataCharacteristicFound || !bleServer || !bleServer.connected) {
+          addLogMessage("Cannot update connection mode: not connected");
+          return;
+        }
+
+        // Clear existing polling interval
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+          pollingInterval = null;
+        }
+
+        try {
+          // Stop notifications if they were started
+          await dataCharacteristicFound.stopNotifications();
+          addLogMessage("Notifications stopped for mode change");
+        } catch (e) {
+          console.log("Error stopping notifications:", e);
+        }
+
+        if (usePollingMode) {
+          // Set up polling interval
+          addLogMessage("Starting polling mode");
+          pollingInterval = setInterval(async () => {
+            if (bleServer && bleServer.connected && dataCharacteristicFound) {
+              try {
+                const value = await dataCharacteristicFound.readValue();
+                const decodedValue = new TextDecoder().decode(value);
+                console.log("Polled value:", decodedValue);
+                processReceivedData(decodedValue);
+              } catch (error) {
+                console.error("Polling error:", error);
+                addLogMessage(`Polling error: ${error.message}`);
+              }
+            }
+          }, 1000); // Poll every second
+        } else {
+          // Set up notifications
+          addLogMessage("Starting notification mode");
+          dataCharacteristicFound.addEventListener(
+            "characteristicvaluechanged",
+            handleCharacteristicChange
+          );
+          await dataCharacteristicFound.startNotifications();
+          console.log("Notifications started");
+          addLogMessage("Notifications started");
+        }
+      }
+
+      function onDisconnected(event) {
+        console.log("Device Disconnected:", event.target.device.name);
+        addLogMessage(`Device disconnected: ${event.target.device.name}`);
+        bleStateContainer.innerHTML = "Device Disconnected";
+        bleStateContainer.style.color = "#d13a30";
+        connectionTimeElement.textContent = "--";
+        connectionStatusElement.textContent = "Disconnected";
+
+        // Clear polling interval if active
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+          pollingInterval = null;
+        }
+
+        // Attempt to reconnect
+        if (reconnectAttempts < 3) {
+          reconnectAttempts++;
+          addLogMessage(`Attempting to reconnect (${reconnectAttempts}/3)...`);
+          setTimeout(() => {
+            if (event.target.device) {
+              reconnect(event.target.device);
+            }
+          }, 2000);
+        }
+      }
+
+      function handleCharacteristicChange(event) {
+        try {
+          const newValueReceived = new TextDecoder().decode(event.target.value);
+          console.log("Characteristic value changed:", newValueReceived);
+
+          // Update notification count and time
+          notificationCount++;
+          notificationCountElement.textContent = notificationCount;
+          const now = new Date();
+          lastNotificationTimeElement.textContent = now.toLocaleTimeString();
+
+          // Process the data
+          processReceivedData(newValueReceived);
+        } catch (error) {
+          console.error("Error handling notification:", error);
+          addLogMessage(`Error handling notification: ${error.message}`);
+        }
+      }
+
+      function processReceivedData(dataString) {
+        // Expected format: "RSSI:-75,TXPower:9"
+        try {
+          if (dataString.includes("RSSI:")) {
+            const rssiMatch = dataString.match(/RSSI:(-?\d+)/);
+            if (rssiMatch && rssiMatch[1]) {
+              const rssiValue = parseInt(rssiMatch[1]);
+              currentRssi = rssiValue;
+              rssiValueElement.textContent = rssiValue + " dBm";
+
+              // Highlight the container to show new data
+              highlightContainer(rssiContainer);
+
+              // Add data point to chart
+              addRssiDataPoint(rssiValue);
+
+              // Log the data
+              addLogMessage(`RSSI: ${rssiValue} dBm`);
+            }
+
+            const txPowerMatch = dataString.match(/TXPower:(-?\d+)/);
+            if (txPowerMatch && txPowerMatch[1]) {
+              const txPowerValue = parseInt(txPowerMatch[1]);
+              currentTxPower = txPowerValue;
+              txPowerValueElement.textContent = txPowerValue + " dBm";
+
+              // Highlight the container to show new data
+              highlightContainer(txPowerContainer);
+
+              // Log the data
+              addLogMessage(`TX Power: ${txPowerValue} dBm`);
+            } else {
+              txPowerValueElement.textContent = "No information";
+            }
+
+            // Calculate distance if we have both RSSI and TX Power
+            if (currentRssi !== null && currentTxPower !== null) {
+              currentDistance = calculateDistance(currentRssi, currentTxPower);
+              distanceValueElement.textContent =
+                currentDistance.toFixed(2) + " m";
+
+              // Highlight the container to show new data
+              highlightContainer(distanceContainer);
+
+              // Add data point to distance chart
+              addDistanceDataPoint(currentDistance);
+
+              // Log the data
+              addLogMessage(
+                `Estimated Distance: ${currentDistance.toFixed(2)} m`
+              );
+
+              // Update RGB if auto mode is enabled
+              if (autoRgbEnabled) {
+                updateRGBBasedOnDistance(currentDistance);
+              }
+            }
+
+            const now = getDateTime();
+            rssiTimestampElement.textContent = now;
+          } else if (dataString.includes("Heartbeat:")) {
+            // Handle heartbeat message
+            addLogMessage(`Heartbeat received: ${dataString}`);
+          }
+        } catch (error) {
+          console.error("Data processing error:", error);
+          addLogMessage(`Data processing error: ${error.message}`);
+        }
+      }
+
+      // Calculate distance using path loss model
+      function calculateDistance(rssi, txPower) {
+        // Path loss model: distance = 10^((txPower - RSSI)/(10*n))
+        //const exponent = (txPower - rssi) / (10 * pathLossExponent);
+        return Math.pow(10, (txPower - rssi - 69.09) / 31.73);
+      }
+
+      // Update RGB LEDs based on distance thresholds
+      function updateRGBBasedOnDistance(distance) {
+        let r, g, b;
+        let colorText;
+
+        // Set RGB values based on distance thresholds
+        if (distance >= 4.0) {
+          // White for 4m+
+          r = 255;
+          g = 255;
+          b = 255;
+          colorText = "White (≥ 4m)";
+        } else if (distance >= 3.0) {
+          // Green for 3-4m
+          r = 0;
+          g = 255;
+          b = 0;
+          colorText = "Green (3-4m)";
+        } else if (distance >= 2.0) {
+          // Yellow for 2-3m
+          r = 255;
+          g = 255;
+          b = 0;
+          colorText = "Yellow (2-3m)";
+        } else if (distance >= 1.0) {
+          // Orange for 1-2m
+          r = 255;
+          g = 165;
+          b = 0;
+          colorText = "Orange (1-2m)";
+        } else {
+          // Red for <1m
+          r = 255;
+          g = 0;
+          b = 0;
+          colorText = "Red (<1m)";
+        }
+
+        // Update sliders to match
+        redSlider.value = r;
+        greenSlider.value = g;
+        blueSlider.value = b;
+        redValue.textContent = r;
+        greenValue.textContent = g;
+        blueValue.textContent = b;
+
+        // Update color indicator
+        colorIndicator.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
+        colorName.textContent = colorText;
+
+        // Send RGB values to ESP32
+        sendRgbValues(r, g, b);
+      }
+
+      // Send RGB values to ESP32
+      function sendRgbValues(r, g, b) {
+        if (!dataCharacteristicFound || !bleServer || !bleServer.connected) {
+          addLogMessage("Cannot send RGB: not connected");
+          return;
+        }
+
+        // Store current RGB values
+        currentRgb = { r, g, b };
+
+        // Create command string for RGB
+        const rgbCommand = `RGB:${r},${g},${b}`;
+
+        // Send RGB command to ESP32
+        try {
+          const encoder = new TextEncoder();
+          const rgbData = encoder.encode(rgbCommand);
+
+          dataCharacteristicFound
+            .writeValue(rgbData)
+            .then(() => {
+              console.log(`RGB values sent: R=${r}, G=${g}, B=${b}`);
+              addLogMessage(`RGB values sent: R=${r}, G=${g}, B=${b}`);
+            })
+            .catch((error) => {
+              console.error("Error sending RGB values:", error);
+              addLogMessage(`Error sending RGB: ${error.message}`);
+            });
+        } catch (error) {
+          console.error("Error preparing RGB data:", error);
+          addLogMessage(`Error preparing RGB data: ${error.message}`);
+        }
+      }
+
+      function addRssiDataPoint(rssiValue) {
+        const now = new Date();
+
+        // Add new data point
+        rssiData.datasets[0].data.push({
+          x: now,
+          y: rssiValue,
+        });
+
+        // Update chart time window
+        updateChartTimeWindow();
+
+        // Update chart
+        rssiChart.update();
+      }
+
+      function addDistanceDataPoint(distanceValue) {
+        const now = new Date();
+
+        // Add new data point
+        distanceData.datasets[0].data.push({
+          x: now,
+          y: distanceValue,
+        });
+
+        // Update chart time window
+        updateChartTimeWindow();
+
+        // Update chart
+        distanceChart.update();
+      }
+
+      function updateChartTimeWindow() {
+        // Calculate time window
+        const now = new Date();
+        const minTime = new Date(now.getTime() - chartTimeWindow * 60 * 1000); // Convert minutes to milliseconds
+
+        // Remove data points outside the time window for RSSI chart
+        rssiData.datasets[0].data = rssiData.datasets[0].data.filter(
+          (point) => point.x >= minTime
+        );
+
+        // Remove data points outside the time window for distance chart
+        distanceData.datasets[0].data = distanceData.datasets[0].data.filter(
+          (point) => point.x >= minTime
+        );
+
+        // Update RSSI chart x-axis
+        rssiChart.options.scales.x.min = minTime;
+        rssiChart.options.scales.x.max = now;
+
+        // Update distance chart x-axis
+        distanceChart.options.scales.x.min = minTime;
+        distanceChart.options.scales.x.max = now;
+
+        // Update charts
+        rssiChart.update();
+        distanceChart.update();
+      }
+
+      function addMeasurementToTable(measurement) {
+        const row = document.createElement("tr");
+
+        row.innerHTML = `
+        <td>${measurement.actualDistance.toFixed(2)}</td>
+        <td>${measurement.measuredDistance.toFixed(2)}</td>
+        <td>${measurement.error.toFixed(2)}</td>
+        <td>${measurement.errorPercent.toFixed(2)}%</td>
+        <td>${measurement.rssi}</td>
+        <td>${measurement.txPower}</td>
+      `;
+
+        measurementTableBody.appendChild(row);
+      }
+
+      function updateComparisonChart() {
+        // Clear existing data
+        comparisonChart.data.labels = [];
+        comparisonChart.data.datasets[0].data = [];
+        comparisonChart.data.datasets[1].data = [];
+
+        // Add labels and data for each measurement
+        measurements.forEach((measurement, index) => {
+          comparisonChart.data.labels.push(`#${index + 1}`);
+          comparisonChart.data.datasets[0].data.push(
+            measurement.actualDistance
+          );
+          comparisonChart.data.datasets[1].data.push(
+            measurement.measuredDistance
+          );
+        });
+
+        // Update chart
+        comparisonChart.update();
+      }
+
+      function highlightContainer(container) {
+        // Add highlight class
+        container.classList.add("data-update");
+
+        // Remove highlight class after animation
+        setTimeout(() => {
+          container.classList.remove("data-update");
+        }, 500);
+      }
+
+      function disconnectDevice() {
+        console.log("Disconnect Device.");
+        addLogMessage("Disconnecting device...");
+
+        // Clear polling interval if active
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+          pollingInterval = null;
+        }
+
+        if (bleServer && bleServer.connected) {
+          if (dataCharacteristicFound) {
+            dataCharacteristicFound
+              .stopNotifications()
+              .then(() => {
+                console.log("Notifications Stopped");
+                addLogMessage("Notifications stopped");
+                return bleServer.disconnect();
+              })
+              .then(() => {
+                console.log("Device Disconnected");
+                addLogMessage("Device disconnected successfully");
+                bleStateContainer.innerHTML = "Device Disconnected";
+                bleStateContainer.style.color = "#d13a30";
+                connectionTimeElement.textContent = "--";
+                connectionStatusElement.textContent = "Disconnected";
+              })
+              .catch((error) => {
+                console.log("An error occurred:", error);
+                addLogMessage(`Disconnect error: ${error.message}`);
+              });
+          } else {
+            console.log("No characteristic found to disconnect.");
+            addLogMessage("No characteristic found to disconnect");
+          }
+        } else {
+          console.error("Bluetooth is not connected.");
+          addLogMessage("Bluetooth is not connected");
+          window.alert("Bluetooth is not connected.");
+        }
+      }
+
+      function getDateTime() {
+        const currentdate = new Date();
+        const day = ("00" + currentdate.getDate()).slice(-2);
+        const month = ("00" + (currentdate.getMonth() + 1)).slice(-2);
+        const year = currentdate.getFullYear();
+        const hours = ("00" + currentdate.getHours()).slice(-2);
+        const minutes = ("00" + currentdate.getMinutes()).slice(-2);
+        const seconds = ("00" + currentdate.getSeconds()).slice(-2);
+        const milliseconds = ("000" + currentdate.getMilliseconds()).slice(-3);
+
+        const datetime =
+          year +
+          "-" +
+          month +
+          "-" +
+          day +
+          " " +
+          hours +
+          ":" +
+          minutes +
+          ":" +
+          seconds +
+          "." +
+          milliseconds;
+        return datetime;
+      }
+
+      function updateConnectionTime() {
+        if (connectionStartTime) {
+          const now = new Date();
+          const diff = Math.floor((now - connectionStartTime) / 1000);
+          const minutes = Math.floor(diff / 60);
+          const seconds = diff % 60;
+          connectionTimeElement.textContent =
+            minutes + " min " + seconds + " sec";
+
+          if (bleServer && bleServer.connected) {
+            setTimeout(updateConnectionTime, 1000);
+          }
+        }
+      }
+
+      function addLogMessage(message) {
+        const timestamp = getDateTime();
+        const logEntry = document.createElement("div");
+        logEntry.textContent = `[${timestamp.split(" ")[1]}] ${message}`;
+        dataLogElement.appendChild(logEntry);
+
+        // Scroll to bottom
+        dataLogElement.scrollTop = dataLogElement.scrollHeight;
+
+        // Limit log entries
+        while (dataLogElement.childElementCount > 100) {
+          dataLogElement.removeChild(dataLogElement.firstChild);
+        }
+      }
+
+      // Monitor connection status
+      function monitorConnection() {
+        if (bleServer) {
+          const isConnected = bleServer.connected;
+          connectionStatusElement.textContent = isConnected
+            ? "Connected"
+            : "Disconnected";
+
+          // If we think we're connected but haven't received notifications in a while
+          if (isConnected && !usePollingMode) {
+            const now = new Date();
+            const lastNotificationTime =
+              lastNotificationTimeElement.textContent;
+            if (lastNotificationTime !== "Never") {
+              const lastTime = new Date(
+                `${now.toDateString()} ${lastNotificationTime}`
+              );
+              const timeSinceLastNotification = (now - lastTime) / 1000;
+
+              // If no notifications for 10 seconds, try to restart notifications
+              if (timeSinceLastNotification > 10) {
+                addLogMessage(
+                  `No notifications for ${Math.round(
+                    timeSinceLastNotification
+                  )} seconds, restarting...`
+                );
+                restartNotifications();
+              }
+            }
+          }
+        }
+
+        // Check again in 5 seconds
+        setTimeout(monitorConnection, 5000);
+      }
+
+      // Restart notifications
+      async function restartNotifications() {
+        if (
+          dataCharacteristicFound &&
+          bleServer &&
+          bleServer.connected &&
+          !usePollingMode
+        ) {
+          try {
+            // Stop existing notifications
+            await dataCharacteristicFound.stopNotifications();
+            addLogMessage("Notifications stopped for restart");
+
+            // Start notifications again
+            await dataCharacteristicFound.startNotifications();
+            addLogMessage("Notifications restarted");
+          } catch (error) {
+            console.error("Error restarting notifications:", error);
+            addLogMessage(`Error restarting notifications: ${error.message}`);
+          }
+        }
+      }
+
+      // Reconnect to device
+      async function reconnect(device) {
+        try {
+          addLogMessage("Attempting to reconnect...");
+
+          // Try to connect to GATT server
+          bleServer = await device.gatt.connect();
+          console.log("Reconnected to GATT Server");
+          addLogMessage("Reconnected to GATT Server");
+
+          // Get service
+          bleServiceFound = await bleServer.getPrimaryService(bleService);
+          console.log("Service rediscovered");
+
+          // Get characteristic
+          dataCharacteristicFound = await bleServiceFound.getCharacteristic(
+            dataCharacteristic
+          );
+          console.log("Characteristic rediscovered");
+
+          // Set up connection based on selected mode
+          await updateConnectionMode();
+
+          // Update UI
+          bleStateContainer.innerHTML = "Reconnected to " + device.name;
+          bleStateContainer.style.color = "#24af37";
+          connectionStatusElement.textContent = "Connected";
+
+          // Reset reconnect attempts
+          reconnectAttempts = 0;
+        } catch (error) {
+          console.error("Reconnection failed:", error);
+          addLogMessage(`Reconnection failed: ${error.message}`);
+
+          // Update UI
+          bleStateContainer.innerHTML = "Reconnection Failed";
+          bleStateContainer.style.color = "#d13a30";
+          connectionStatusElement.textContent = "Disconnected";
+        }
+      }
+
+      // Execute on page load
+      document.addEventListener("DOMContentLoaded", function () {
+        console.log("Page loaded, ready for BLE connection");
+        addLogMessage("Page loaded, ready for BLE connection");
+        isWebBluetoothEnabled();
+        checkBrowserCompatibility();
+
+        // Initialize model parameters
+        pathLossExponent = parseFloat(pathLossExponentInput.value);
+        referenceDistance = parseFloat(referenceDistanceInput.value);
+
+        // Initialize color preview
+        updateColorPreview();
+      });
+    </script>
+  </body>
+</html>
